@@ -1041,6 +1041,8 @@ func (reason ClosedState) String() string {
 		return "Server Shutdown"
 	case AuthenticationExpired:
 		return "Authentication Expired"
+	case WrongGateway:
+		return "Wrong Gateway"
 	}
 	return "Unknown State"
 }
