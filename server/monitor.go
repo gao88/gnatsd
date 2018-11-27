@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/nats-io/gnatsd/server/pse"
+	"io/ioutil"
+	"bytes"
 )
 
 // Snapshot this
@@ -77,7 +79,7 @@ type ConnzOptions struct {
 type ConnState int
 
 const (
-	ConnOpen = ConnState(iota)
+	ConnOpen   = ConnState(iota)
 	ConnClosed
 	ConnAll
 )
@@ -969,6 +971,131 @@ func (s *Server) HandleVarz(w http.ResponseWriter, r *http.Request) {
 
 	// Handle response
 	ResponseHandler(w, r, b)
+}
+
+type RegInformerInfo struct {
+	Url string `json:"url"`
+	Opt string `json:"opt"` //"add", "del"
+}
+
+type ClientConnDetail struct {
+	IP   string `json:"ip"`
+	Port int    `json:"port"`
+}
+
+type ClientConnInfo struct {
+	Name       string              `json:"name"`
+	clientList []*ClientConnDetail `json:"client_list"`
+}
+
+func (s *Server) HandleRegInformer(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.httpReqStats[RegInformerPath]++
+	s.mu.Unlock()
+
+	body, _ := ioutil.ReadAll(r.Body)
+	fmt.Println(string(body))
+
+	info := &RegInformerInfo{}
+	err := json.Unmarshal(body, info)
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	if info.Opt == "add" {
+		s.informers.Store(info.Url, "")
+	} else {
+		s.informers.Delete(info.Url)
+	}
+
+	s.BroadcastClientInfoToInformer()
+
+	ResponseHandler(w, r, []byte("ok"))
+}
+
+func (s *Server) BroadcastClientInfoToInformer() {
+	go func() {
+		s.mu.Lock()
+		clients := s.clients
+		s.mu.Unlock()
+
+		if len(clients) == 0 {
+			fmt.Println("len(s.clients) == 0")
+			return
+		}
+
+		m := make(map[string][]*ClientConnDetail)
+
+		for _, client := range clients {
+			detail := &ClientConnDetail{}
+
+			switch conn := client.nc.(type) {
+			case *net.TCPConn, *tls.Conn:
+				addr := conn.RemoteAddr().(*net.TCPAddr)
+				detail.IP = addr.IP.String()
+				detail.Port = addr.Port
+			default:
+				continue
+			}
+
+			m[client.opts.Name] = append(m[client.opts.Name], detail)
+		}
+
+		list := make([]*ClientConnInfo, len(clients))
+
+		for k, v := range m {
+			info := &ClientConnInfo{}
+			info.Name = k
+			info.clientList = v
+			list = append(list, info)
+		}
+
+		if len(list) == 0 {
+			fmt.Println("len(list) == 0")
+			return
+		}
+
+		body, err := json.Marshal(&list)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		s.informers.Range(func(key, value interface{}) bool {
+			url, ok := key.(string)
+			if !ok {
+				fmt.Println("!ok")
+				return true
+			}
+
+			req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+			if err != nil {
+				fmt.Println(err)
+				return true
+			}
+
+			req.Header.Set("Content-Type", "application/octet-stream")
+			req.Close = true
+
+			var httpClient = &http.Client{Timeout: 3}
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				fmt.Println(err)
+				return true
+			}
+
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Println("resp.StatusCode != http.StatusOK")
+				return true
+			}
+
+			return true
+		})
+	}()
 }
 
 // Grab RSS and PCPU

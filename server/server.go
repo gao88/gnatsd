@@ -148,6 +148,8 @@ type Server struct {
 
 	// Trusted public operator keys.
 	trustedNkeys []string
+
+	informers sync.Map
 }
 
 // Make sure all are 64bits for atomic use
@@ -730,6 +732,8 @@ func (s *Server) Shutdown() {
 			l.Close()
 		}
 	}
+
+	s.BroadcastClientInfoToInformer()
 }
 
 // AcceptLoop is exported for easier testing.
@@ -937,6 +941,7 @@ const (
 	RoutezPath  = "/routez"
 	SubszPath   = "/subsz"
 	StackszPath = "/stacksz"
+	RegInformerPath = "/reg_informer"
 )
 
 // Start the monitoring server
@@ -951,6 +956,7 @@ func (s *Server) startMonitoring(secure bool) error {
 		ConnzPath:  0,
 		RoutezPath: 0,
 		SubszPath:  0,
+		RegInformerPath: 0,
 	}
 
 	var (
@@ -1005,6 +1011,8 @@ func (s *Server) startMonitoring(secure bool) error {
 	mux.HandleFunc("/subscriptionsz", s.HandleSubsz)
 	// Stacksz
 	mux.HandleFunc(StackszPath, s.HandleStacksz)
+	// Informer
+	mux.HandleFunc(RegInformerPath, s.HandleRegInformer)
 
 	// Do not set a WriteTimeout because it could cause cURL/browser
 	// to return empty response or unable to display page if the
@@ -1113,6 +1121,8 @@ func (s *Server) createClient(conn net.Conn) *client {
 	}
 	s.clients[c.cid] = c
 	s.mu.Unlock()
+
+	s.BroadcastClientInfoToInformer()
 
 	// Re-Grab lock
 	c.mu.Lock()
@@ -1342,6 +1352,8 @@ func (s *Server) removeClient(c *client) {
 		s.grMu.Unlock()
 	}
 	s.mu.Unlock()
+
+	s.BroadcastClientInfoToInformer()
 }
 
 /////////////////////////////////////////////////////////////////
