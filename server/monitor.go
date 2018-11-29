@@ -973,19 +973,14 @@ func (s *Server) HandleVarz(w http.ResponseWriter, r *http.Request) {
 	ResponseHandler(w, r, b)
 }
 
-type RegInformerInfo struct {
+type CInformerInfo struct {
 	Url string `json:"url"`
 	Opt string `json:"opt"` //"add", "del"
 }
 
-type ClientConnDetail struct {
+type CNode struct {
 	IP   string `json:"ip"`
-	Port int    `json:"port"`
-}
-
-type ClientConnInfo struct {
-	Name       string              `json:"name"`
-	clientList []*ClientConnDetail `json:"client_list"`
+	//Port int    `json:"port"`
 }
 
 func (s *Server) HandleRegInformer(w http.ResponseWriter, r *http.Request) {
@@ -996,7 +991,7 @@ func (s *Server) HandleRegInformer(w http.ResponseWriter, r *http.Request) {
 	body, _ := ioutil.ReadAll(r.Body)
 	fmt.Println(string(body))
 
-	info := &RegInformerInfo{}
+	info := &CInformerInfo{}
 	err := json.Unmarshal(body, info)
 	if err != nil {
 		w.WriteHeader(http.StatusOK)
@@ -1012,7 +1007,7 @@ func (s *Server) HandleRegInformer(w http.ResponseWriter, r *http.Request) {
 
 	s.BroadcastClientInfoToInformer()
 
-	ResponseHandler(w, r, []byte("ok"))
+	ResponseHandler(w, r, []byte(""))
 }
 
 func (s *Server) BroadcastClientInfoToInformer() {
@@ -1021,47 +1016,40 @@ func (s *Server) BroadcastClientInfoToInformer() {
 		clients := s.clients
 		s.mu.Unlock()
 
-		if len(clients) == 0 {
-			fmt.Println("len(s.clients) == 0")
-			return
-		}
-
-		m := make(map[string][]*ClientConnDetail)
+		m := make(map[string][]*CNode)
 
 		for _, client := range clients {
-			detail := &ClientConnDetail{}
+			fmt.Println("client:", *client)
+
+			name := client.opts.Name
+
+			if name == "" {
+				continue
+			}
+
+			detail := &CNode{}
 
 			switch conn := client.nc.(type) {
 			case *net.TCPConn, *tls.Conn:
 				addr := conn.RemoteAddr().(*net.TCPAddr)
 				detail.IP = addr.IP.String()
-				detail.Port = addr.Port
+				//detail.Port = addr.Port
 			default:
 				continue
 			}
 
-			m[client.opts.Name] = append(m[client.opts.Name], detail)
+			m[name] = append(m[name], detail)
 		}
 
-		list := make([]*ClientConnInfo, len(clients))
-
-		for k, v := range m {
-			info := &ClientConnInfo{}
-			info.Name = k
-			info.clientList = v
-			list = append(list, info)
-		}
-
-		if len(list) == 0 {
-			fmt.Println("len(list) == 0")
-			return
-		}
-
-		body, err := json.Marshal(&list)
+		body, err := json.Marshal(&m)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
+
+		fmt.Println("body:", string(body))
+
+		delInformers := make([]string, 0)
 
 		s.informers.Range(func(key, value interface{}) bool {
 			url, ok := key.(string)
@@ -1079,22 +1067,38 @@ func (s *Server) BroadcastClientInfoToInformer() {
 			req.Header.Set("Content-Type", "application/octet-stream")
 			req.Close = true
 
-			var httpClient = &http.Client{Timeout: 3}
-			resp, err := httpClient.Do(req)
-			if err != nil {
-				fmt.Println(err)
-				return true
+			var isStatusOK bool
+
+			for i := 0; i < 3; i++ {
+				var httpClient = &http.Client{Timeout: 1 * time.Second}
+				resp, err := httpClient.Do(req)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+
+				if resp.StatusCode != http.StatusOK {
+					fmt.Println("resp.StatusCode != http.StatusOK")
+					continue
+				}
+
+				resp.Body.Close()
+
+				isStatusOK = true
+
+				break
 			}
 
-			resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				fmt.Println("resp.StatusCode != http.StatusOK")
-				return true
+			if !isStatusOK {
+				delInformers = append(delInformers, url)
 			}
 
 			return true
 		})
+
+		for _, url := range delInformers {
+			s.informers.Delete(url)
+		}
 	}()
 }
 
