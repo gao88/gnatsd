@@ -942,6 +942,8 @@ const (
 	SubszPath   = "/subsz"
 	StackszPath = "/stacksz"
 	RegInformerPath = "/reg_informer"
+	GetInformerPath = "/get_informer"
+	NodesPath = "/nodes"
 )
 
 // Start the monitoring server
@@ -957,6 +959,8 @@ func (s *Server) startMonitoring(secure bool) error {
 		RoutezPath: 0,
 		SubszPath:  0,
 		RegInformerPath: 0,
+		GetInformerPath: 0,
+		NodesPath: 0,
 	}
 
 	var (
@@ -1011,8 +1015,12 @@ func (s *Server) startMonitoring(secure bool) error {
 	mux.HandleFunc("/subscriptionsz", s.HandleSubsz)
 	// Stacksz
 	mux.HandleFunc(StackszPath, s.HandleStacksz)
-	// Informer
+	// RegInformer
 	mux.HandleFunc(RegInformerPath, s.HandleRegInformer)
+	// GetInformer
+	mux.HandleFunc(GetInformerPath, s.HandleGetInformer)
+	// Nodes
+	mux.HandleFunc(NodesPath, s.HandleNodes)
 
 	// Do not set a WriteTimeout because it could cause cURL/browser
 	// to return empty response or unable to display page if the

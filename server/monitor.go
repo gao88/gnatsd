@@ -913,6 +913,8 @@ func (s *Server) HandleRoot(w http.ResponseWriter, r *http.Request) {
 	<a href=/connz>connz</a><br/>
 	<a href=/routez>routez</a><br/>
 	<a href=/subsz>subsz</a><br/>
+	<a href=/get_informer>informer</a><br/>
+	<a href=/nodes>nodes</a><br/>
     <br/>
     <a href=http://nats.io/documentation/server/gnatsd-monitoring/>help</a>
   </body>
@@ -1010,36 +1012,92 @@ func (s *Server) HandleRegInformer(w http.ResponseWriter, r *http.Request) {
 	ResponseHandler(w, r, []byte(""))
 }
 
+func (s *Server) HandleGetInformer(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.httpReqStats[GetInformerPath]++
+	s.mu.Unlock()
+
+	list := s.getInformers()
+
+	b, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		s.Errorf("Error marshaling response to /connz request: %v", err)
+	}
+
+	// Handle response
+	ResponseHandler(w, r, b)
+}
+
+func (s *Server) getInformers() []string {
+	informers := make([]string, 0)
+
+	s.informers.Range(func(key, value interface{}) bool {
+		url, ok := key.(string)
+		if !ok {
+			fmt.Println("!ok")
+			return true
+		}
+
+		informers = append(informers, url)
+
+		return true
+	})
+
+	return informers
+}
+
+func (s *Server) HandleNodes(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.httpReqStats[NodesPath]++
+	s.mu.Unlock()
+
+	m := s.getNodes()
+
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		s.Errorf("Error marshaling response to /connz request: %v", err)
+	}
+
+	// Handle response
+	ResponseHandler(w, r, b)
+}
+
+func (s *Server) getNodes() map[string][]*CNode {
+	s.mu.Lock()
+	clients := s.clients
+	s.mu.Unlock()
+
+	m := make(map[string][]*CNode)
+
+	for _, client := range clients {
+		fmt.Println("client:", *client)
+
+		name := client.opts.Name
+
+		if name == "" {
+			continue
+		}
+
+		detail := &CNode{}
+
+		switch conn := client.nc.(type) {
+		case *net.TCPConn, *tls.Conn:
+			addr := conn.RemoteAddr().(*net.TCPAddr)
+			detail.IP = addr.IP.String()
+			//detail.Port = addr.Port
+		default:
+			continue
+		}
+
+		m[name] = append(m[name], detail)
+	}
+
+	return m
+}
+
 func (s *Server) BroadcastClientInfoToInformer() {
 	go func() {
-		s.mu.Lock()
-		clients := s.clients
-		s.mu.Unlock()
-
-		m := make(map[string][]*CNode)
-
-		for _, client := range clients {
-			fmt.Println("client:", *client)
-
-			name := client.opts.Name
-
-			if name == "" {
-				continue
-			}
-
-			detail := &CNode{}
-
-			switch conn := client.nc.(type) {
-			case *net.TCPConn, *tls.Conn:
-				addr := conn.RemoteAddr().(*net.TCPAddr)
-				detail.IP = addr.IP.String()
-				//detail.Port = addr.Port
-			default:
-				continue
-			}
-
-			m[name] = append(m[name], detail)
-		}
+		m := s.getNodes()
 
 		body, err := json.Marshal(&m)
 		if err != nil {
